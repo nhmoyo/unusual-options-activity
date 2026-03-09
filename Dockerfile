@@ -1,15 +1,15 @@
 FROM apify/actor-node-playwright-chrome:22 AS builder
 
-COPY --chown=myuser package*.json ./
+COPY package*.json ./
 
-RUN npm install --include=dev --audit=false && echo "All dependencies installed"
+RUN npm install --audit=false && echo "All dependencies installed"
 
-COPY --chown=myuser . ./
+COPY . ./
 
 FROM apify/actor-node-playwright-chrome:22
 
-COPY --from=builder --chown=myuser /usr/local/lib/node_modules ./node_modules
+COPY --from=builder /usr/local/lib/node_modules ./node_modules
 
-COPY --chown=myuser . ./
+COPY . ./
 
 CMD npm start --silent
