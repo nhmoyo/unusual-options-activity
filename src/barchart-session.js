@@ -1,69 +1,55 @@
 /**
  * barchart-session.js
  *
- * Barchart requires an XSRF token to be sent with every API request.
- * This module boots a lightweight browser session to grab that token
- * from Barchart's cookies, then returns it for use in plain HTTP requests.
- *
- * We only need a real browser ONCE per actor run — all subsequent
- * data calls are fast plain HTTP (no browser overhead).
+ * Gets the XSRF token needed for Barchart API calls.
+ * Uses a plain HTTP request instead of a full browser —
+ * faster and more reliable on Apify's infrastructure.
  */
 
-import { chromium } from 'playwright';
-
-/**
- * Visits Barchart and extracts the XSRF token + cookies.
- * Returns an object with:
- *   - xsrfToken: string
- *   - cookieHeader: string (full cookie string for HTTP headers)
- */
 export async function getBarchartSession() {
-    console.log('🔑 Bootstrapping Barchart session to get XSRF token...');
+    console.log('🔑 Bootstrapping Barchart session...');
 
-    const browser = await chromium.launch({ headless: true });
-    const context = await browser.newContext({
-        userAgent:
-            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 ' +
-            '(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+    const response = await fetch('https://www.barchart.com/options/unusual-activity/stocks', {
+        method: 'GET',
+        headers: {
+            'User-Agent':
+                'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:148.0) ' +
+                'Gecko/20100101 Firefox/148.0',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+            'Accept-Language': 'en-US,en;q=0.9',
+        },
+        redirect: 'follow',
     });
 
-    const page = await context.newPage();
+    // Extract cookies from response headers
+    const rawCookies = response.headers.getSetCookie
+        ? response.headers.getSetCookie()
+        : [];
 
-    // Navigate to the options page — this sets the XSRF cookie
-    await page.goto('https://www.barchart.com/options/unusual-activity/stocks', {
-        waitUntil: 'domcontentloaded',
-        timeout: 30000,
-    });
+    // Build cookie header string
+    const cookieMap = {};
+    for (const cookie of rawCookies) {
+        const [pair] = cookie.split(';');
+        const [name, ...rest] = pair.split('=');
+        cookieMap[name.trim()] = rest.join('=').trim();
+    }
 
-    // Wait a moment for all cookies to be set
-    await page.waitForTimeout(2000);
+    const xsrfRaw = cookieMap['XSRF-TOKEN'];
 
-    // Extract all cookies
-    const cookies = await context.cookies();
-
-    // Find the XSRF token specifically
-    const xsrfCookie = cookies.find(
-        (c) => c.name === 'XSRF-TOKEN' || c.name === 'xsrf-token'
-    );
-
-    if (!xsrfCookie) {
+    if (!xsrfRaw) {
         throw new Error(
-            '❌ Could not find XSRF token in Barchart cookies. ' +
+            '❌ Could not find XSRF-TOKEN in Barchart response cookies. ' +
             'Barchart may have changed their auth flow.'
         );
     }
 
-    // Build a cookie header string from all cookies
-    const cookieHeader = cookies
-        .map((c) => `${c.name}=${c.value}`)
+    const xsrfToken = decodeURIComponent(xsrfRaw);
+
+    // Build full cookie header
+    const cookieHeader = Object.entries(cookieMap)
+        .map(([k, v]) => `${k}=${v}`)
         .join('; ');
 
-    await browser.close();
-
-    // XSRF token values are URL-encoded — decode before using
-    const xsrfToken = decodeURIComponent(xsrfCookie.value);
-
     console.log('✅ Barchart session bootstrapped successfully.');
-
     return { xsrfToken, cookieHeader };
 }
