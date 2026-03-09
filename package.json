@@ -5,8 +5,8 @@
     "description": "Scrapes unusual options activity, options chains, and ticker-level flow from Barchart",
     "main": "src/main.js",
     "scripts": {
-        "start": "node /usr/src/app/src/main.js",
-        "test": "node /usr/src/app/src/main.js"
+       "start": "node src/main.js",
+        "test": "node src/main.js"
     },
     "dependencies": {
         "apify": "^3.2.0",
