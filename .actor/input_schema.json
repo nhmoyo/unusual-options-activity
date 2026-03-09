@@ -1,0 +1,75 @@
+{
+    "title": "Options Flow Scraper",
+    "description": "Configure which type of options data to fetch from Barchart.",
+    "type": "object",
+    "schemaVersion": 1,
+    "properties": {
+        "mode": {
+            "title": "Mode",
+            "type": "string",
+            "description": "Choose what to scrape:\n- **unusual-activity**: Market-wide scan for contracts with abnormally high volume vs open interest (smart money signals).\n- **options-chain**: Full options chain for one or more tickers.\n- **ticker-flow**: Intraday trade-by-trade flow for a specific ticker.",
+            "enum": ["unusual-activity", "options-chain", "ticker-flow"],
+            "enumTitles": [
+                "Unusual Activity (market-wide scan)",
+                "Options Chain (by ticker)",
+                "Ticker Flow (intraday trades)"
+            ],
+            "default": "unusual-activity"
+        },
+        "tickers": {
+            "title": "Tickers",
+            "type": "array",
+            "description": "List of stock tickers to fetch data for. Required for 'options-chain' and 'ticker-flow' modes. Example: [\"AAPL\", \"NVDA\", \"SPY\"]",
+            "items": {
+                "type": "string"
+            },
+            "prefill": ["AAPL", "NVDA", "SPY"],
+            "editor": "stringList"
+        },
+        "underlyingType": {
+            "title": "Underlying Type",
+            "type": "string",
+            "description": "Filter unusual activity results by underlying asset type. Only applies to 'unusual-activity' mode.",
+            "enum": ["stocks", "etfs", "indices", "all"],
+            "enumTitles": ["Stocks only", "ETFs only", "Indices only", "All types"],
+            "default": "all"
+        },
+        "optionType": {
+            "title": "Option Type",
+            "type": "string",
+            "description": "Filter results to calls only, puts only, or both.",
+            "enum": ["call", "put", "all"],
+            "enumTitles": ["Calls only", "Puts only", "Calls & Puts"],
+            "default": "all"
+        },
+        "minVolumeOIRatio": {
+            "title": "Minimum Volume/OI Ratio",
+            "type": "number",
+            "description": "Only return contracts where volume divided by open interest is above this threshold. Higher values = more unusual activity. Recommended: 1.5 or above.",
+            "minimum": 0,
+            "default": 1.5
+        },
+        "minPremium": {
+            "title": "Minimum Total Premium ($)",
+            "type": "integer",
+            "description": "Only return contracts where total premium (price × volume × 100) exceeds this dollar amount. Filters out small retail trades. Example: 50000 = $50k minimum.",
+            "minimum": 0,
+            "default": 10000
+        },
+        "expirationDate": {
+            "title": "Expiration Date",
+            "type": "string",
+            "description": "Filter options chain to a specific expiration date. Format: YYYY-MM-DD. Leave blank to return all expirations. Only applies to 'options-chain' mode.",
+            "editor": "textfield"
+        },
+        "maxResults": {
+            "title": "Max Results",
+            "type": "integer",
+            "description": "Maximum number of results to return. Useful for cost control.",
+            "minimum": 1,
+            "maximum": 5000,
+            "default": 500
+        }
+    },
+    "required": ["mode"]
+}
