@@ -23,13 +23,7 @@ function buildHeaders(session) {
     };
 }
 
-export async function fetchUnusualActivityPage(session, baseSymbolTypes = 'stock', page = 1, limit = 200) {
-    const today = new Date();
-    const threeDaysAgo = new Date(today);
-    threeDaysAgo.setDate(today.getDate() - 3);
-    const fromDate = threeDaysAgo.toISOString().split('T')[0];
-    const toDate = today.toISOString().split('T')[0];
-
+export async function fetchUnusualActivityPage(session, baseSymbolTypes = 'stock', page = 1, limit = 10) {
     const params = new URLSearchParams({
         fields: UNUSUAL_ACTIVITY_FIELDS,
         orderBy: 'volumeOpenInterestRatio',
@@ -40,16 +34,17 @@ export async function fetchUnusualActivityPage(session, baseSymbolTypes = 'stock
         raw: '1',
     });
 
-    params.set('between(volumeOpenInterestRatio,1.24,)', '');
-    params.set('between(lastPrice,.10,)', '');
-    params.set('between(tradeTime,' + fromDate + ',' + toDate + ')', '');
-    params.set('between(volume,500,)', '');
-    params.set('between(openInterest,100,)', '');
-    params.set('in(exchange,(AMEX,NYSE,NASDAQ,INDEX-CBOE))', '');
+    // ALL FILTERS COMMENTED OUT FOR DEBUGGING
+    // params.set('between(volumeOpenInterestRatio,1.24,)', '');
+    // params.set('between(lastPrice,.10,)', '');
+    // params.set('between(tradeTime,' + fromDate + ',' + toDate + ')', '');
+    // params.set('between(volume,500,)', '');
+    // params.set('between(openInterest,100,)', '');
+    // params.set('in(exchange,(AMEX,NYSE,NASDAQ,INDEX-CBOE))', '');
 
     const url = BASE_URL + '?' + params.toString();
 
-    console.log('   DEBUG URL: ' + url.substring(0, 300));
+    console.log('   DEBUG URL: ' + url.substring(0, 400));
     console.log('   DEBUG XSRF length: ' + session.xsrfToken.length);
 
     const response = await fetch(url, {
@@ -59,7 +54,7 @@ export async function fetchUnusualActivityPage(session, baseSymbolTypes = 'stock
 
     console.log('   DEBUG status: ' + response.status);
     const text = await response.text();
-    console.log('   DEBUG response: ' + text.substring(0, 400));
+    console.log('   DEBUG response: ' + text.substring(0, 600));
 
     const json = JSON.parse(text);
     return {
@@ -69,7 +64,7 @@ export async function fetchUnusualActivityPage(session, baseSymbolTypes = 'stock
 }
 
 export async function fetchUnusualActivity(session, baseSymbolTypes = 'stock', maxResults = 500) {
-    const LIMIT = 200;
+    const LIMIT = 10;
     const allData = [];
     let page = 1;
     let total = Infinity;
