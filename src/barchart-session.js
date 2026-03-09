@@ -1,53 +1,45 @@
-export async function getBarchartSession() {
-    console.log('🔑 Bootstrapping Barchart session...');
+export async function fetchUnusualActivityPage(session, baseSymbolTypes = 'stock', page = 1, limit = 200) {
+    const today = new Date();
+    const threeDaysAgo = new Date(today);
+    threeDaysAgo.setDate(today.getDate() - 3);
+    const fromDate = threeDaysAgo.toISOString().split('T')[0];
+    const toDate = today.toISOString().split('T')[0];
 
-    const response = await fetch('https://www.barchart.com/options/unusual-activity/stocks', {
-        method: 'GET',
-        headers: {
-            'User-Agent':
-                'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:148.0) ' +
-                'Gecko/20100101 Firefox/148.0',
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-            'Accept-Language': 'en-US,en;q=0.9',
-        },
-        redirect: 'follow',
+    const params = new URLSearchParams({
+        fields: UNUSUAL_ACTIVITY_FIELDS,
+        orderBy: 'volumeOpenInterestRatio',
+        orderDir: 'desc',
+        baseSymbolTypes,
+        limit: String(limit),
+        page: String(page),
+        meta: 'field.shortName,field.type,field.description',
+        raw: '1',
     });
 
-    console.log(`   Status: ${response.status}`);
+    params.set('between(volumeOpenInterestRatio,1.24,)', '');
+    params.set('between(lastPrice,.10,)', '');
+    params.set(`between(tradeTime,${fromDate},${toDate})`, '');
+    params.set('between(volume,500,)', '');
+    params.set('between(openInterest,100,)', '');
+    params.set('in(exchange,(AMEX,NYSE,NASDAQ,INDEX-CBOE))', '');
 
-    // Log all response headers for debugging
-    for (const [key, value] of response.headers.entries()) {
-        console.log(`   Header: ${key} = ${value}`);
-    }
+    const url = `${BASE_URL}?${params.toString()}`;
+    console.log(`   Request URL: ${url.substring(0, 200)}`);
+    console.log(`   XSRF token length: ${session.xsrfToken.length}`);
+    console.log(`   Cookie header length: ${session.cookieHeader.length}`);
 
-    const rawCookies = response.headers.getSetCookie
-        ? response.headers.getSetCookie()
-        : [];
+    const response = await fetch(url, {
+        method: 'GET',
+        headers: buildHeaders(session),
+    });
 
-    console.log(`   Raw cookies count: ${rawCookies.length}`);
-    rawCookies.forEach((c, i) => console.log(`   Cookie ${i}: ${c.substring(0, 80)}...`));
+    console.log(`   API response status: ${response.status}`);
+    const responseText = await response.text();
+    console.log(`   API response preview: ${responseText.substring(0, 500)}`);
 
-    const cookieMap = {};
-    for (const cookie of rawCookies) {
-        const [pair] = cookie.split(';');
-        const [name, ...rest] = pair.split('=');
-        cookieMap[name.trim()] = rest.join('=').trim();
-    }
-
-    const xsrfRaw = cookieMap['XSRF-TOKEN'];
-    console.log(`   XSRF-TOKEN found: ${!!xsrfRaw}`);
-
-    if (!xsrfRaw) {
-        // Don't throw — try continuing with empty token to see what Barchart returns
-        console.log('⚠️  No XSRF token found — proceeding without it to debug response');
-        return { xsrfToken: '', cookieHeader: '' };
-    }
-
-    const xsrfToken = decodeURIComponent(xsrfRaw);
-    const cookieHeader = Object.entries(cookieMap)
-        .map(([k, v]) => `${k}=${v}`)
-        .join('; ');
-
-    console.log('✅ Barchart session bootstrapped successfully.');
-    return { xsrfToken, cookieHeader };
+    const json = JSON.parse(responseText);
+    return {
+        data: json.data || [],
+        total: json.total || 0,
+    };
 }
