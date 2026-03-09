@@ -1,11 +1,3 @@
-/**
- * barchart-session.js
- *
- * Gets the XSRF token needed for Barchart API calls.
- * Uses a plain HTTP request instead of a full browser —
- * faster and more reliable on Apify's infrastructure.
- */
-
 export async function getBarchartSession() {
     console.log('🔑 Bootstrapping Barchart session...');
 
@@ -21,12 +13,20 @@ export async function getBarchartSession() {
         redirect: 'follow',
     });
 
-    // Extract cookies from response headers
+    console.log(`   Status: ${response.status}`);
+
+    // Log all response headers for debugging
+    for (const [key, value] of response.headers.entries()) {
+        console.log(`   Header: ${key} = ${value}`);
+    }
+
     const rawCookies = response.headers.getSetCookie
         ? response.headers.getSetCookie()
         : [];
 
-    // Build cookie header string
+    console.log(`   Raw cookies count: ${rawCookies.length}`);
+    rawCookies.forEach((c, i) => console.log(`   Cookie ${i}: ${c.substring(0, 80)}...`));
+
     const cookieMap = {};
     for (const cookie of rawCookies) {
         const [pair] = cookie.split(';');
@@ -35,17 +35,15 @@ export async function getBarchartSession() {
     }
 
     const xsrfRaw = cookieMap['XSRF-TOKEN'];
+    console.log(`   XSRF-TOKEN found: ${!!xsrfRaw}`);
 
     if (!xsrfRaw) {
-        throw new Error(
-            '❌ Could not find XSRF-TOKEN in Barchart response cookies. ' +
-            'Barchart may have changed their auth flow.'
-        );
+        // Don't throw — try continuing with empty token to see what Barchart returns
+        console.log('⚠️  No XSRF token found — proceeding without it to debug response');
+        return { xsrfToken: '', cookieHeader: '' };
     }
 
     const xsrfToken = decodeURIComponent(xsrfRaw);
-
-    // Build full cookie header
     const cookieHeader = Object.entries(cookieMap)
         .map(([k, v]) => `${k}=${v}`)
         .join('; ');
