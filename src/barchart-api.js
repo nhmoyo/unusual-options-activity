@@ -23,7 +23,13 @@ function buildHeaders(session) {
     };
 }
 
-export async function fetchUnusualActivityPage(session, baseSymbolTypes = 'stock', page = 1, limit = 10) {
+export async function fetchUnusualActivityPage(session, baseSymbolTypes = 'stock', page = 1, limit = 200) {
+    const today = new Date();
+    const threeDaysAgo = new Date(today);
+    threeDaysAgo.setDate(today.getDate() - 3);
+    const fromDate = threeDaysAgo.toISOString().split('T')[0];
+    const toDate = today.toISOString().split('T')[0];
+
     const params = new URLSearchParams({
         fields: UNUSUAL_ACTIVITY_FIELDS,
         orderBy: 'volumeOpenInterestRatio',
@@ -34,29 +40,32 @@ export async function fetchUnusualActivityPage(session, baseSymbolTypes = 'stock
         raw: '1',
     });
 
-    // ALL FILTERS COMMENTED OUT FOR DEBUGGING
-    // params.set('between(volumeOpenInterestRatio,1.24,)', '');
-    // params.set('between(lastPrice,.10,)', '');
-    // params.set('between(tradeTime,' + fromDate + ',' + toDate + ')', '');
-    // params.set('between(volume,500,)', '');
-    // params.set('between(openInterest,100,)', '');
-    // params.set('in(exchange,(AMEX,NYSE,NASDAQ,INDEX-CBOE))', '');
+    params.set('between(volumeOpenInterestRatio,1.24,)', '');
+    params.set('between(lastPrice,.10,)', '');
+    params.set('between(tradeTime,' + fromDate + ',' + toDate + ')', '');
+    params.set('between(volume,500,)', '');
+    params.set('between(openInterest,100,)', '');
+    params.set('in(exchange,(AMEX,NYSE,NASDAQ,INDEX-CBOE))', '');
 
     const url = BASE_URL + '?' + params.toString();
-
-    console.log('   DEBUG URL: ' + url.substring(0, 400));
-    console.log('   DEBUG XSRF length: ' + session.xsrfToken.length);
 
     const response = await fetch(url, {
         method: 'GET',
         headers: buildHeaders(session),
     });
 
-    console.log('   DEBUG status: ' + response.status);
-    const text = await response.text();
-    console.log('   DEBUG response: ' + text.substring(0, 600));
+    if (response.status === 429) {
+        console.log('   Rate limited on page ' + page + ' — waiting 10s...');
+        await new Promise(r => setTimeout(r, 10000));
+        return fetchUnusualActivityPage(session, baseSymbolTypes, page, limit);
+    }
 
-    const json = JSON.parse(text);
+    if (!response.ok) {
+        const text = await response.text();
+        throw new Error('Barchart API error ' + response.status + ': ' + text.substring(0, 200));
+    }
+
+    const json = await response.json();
     return {
         data: json.data || [],
         total: json.total || 0,
@@ -64,7 +73,7 @@ export async function fetchUnusualActivityPage(session, baseSymbolTypes = 'stock
 }
 
 export async function fetchUnusualActivity(session, baseSymbolTypes = 'stock', maxResults = 500) {
-    const LIMIT = 10;
+    const LIMIT = 200;
     const allData = [];
     let page = 1;
     let total = Infinity;
@@ -76,7 +85,7 @@ export async function fetchUnusualActivity(session, baseSymbolTypes = 'stock', m
         allData.push(...data);
         if (data.length < LIMIT) break;
         page++;
-        await new Promise(r => setTimeout(r, 1100));
+        await new Promise(r => setTimeout(r, 2000));
     }
 
     return allData.slice(0, maxResults);
@@ -122,7 +131,7 @@ export async function fetchOptionsChain(session, ticker, expirationDate = null, 
 
         if (data.length < LIMIT || allData.length >= (json.total || 0)) break;
         page++;
-        await new Promise(r => setTimeout(r, 1100));
+        await new Promise(r => setTimeout(r, 2000));
     }
 
     return allData.slice(0, maxResults);
