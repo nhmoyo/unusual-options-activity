@@ -1,75 +1,94 @@
 {
     "title": "Options Flow Scraper",
-    "description": "Configure which type of options data to fetch from Barchart.",
+    "description": "Scrape unusual options activity, full options chains, and ticker-level flow data from Barchart. Each run costs a flat $1.50 and returns a full snapshot of current market signals.",
     "type": "object",
     "schemaVersion": 1,
     "properties": {
+
         "mode": {
             "title": "Mode",
             "type": "string",
-            "description": "Choose what to scrape:\n- **unusual-activity**: Market-wide scan for contracts with abnormally high volume vs open interest (smart money signals).\n- **options-chain**: Full options chain for one or more tickers.\n- **ticker-flow**: Intraday trade-by-trade flow for a specific ticker.",
+            "description": "What data to fetch. unusual-activity scans the whole market for high Vol/OI signals. options-chain fetches all contracts for specific tickers. ticker-flow fetches intraday order flow for specific tickers.",
             "enum": ["unusual-activity", "options-chain", "ticker-flow"],
             "enumTitles": [
-                "Unusual Activity (market-wide scan)",
-                "Options Chain (by ticker)",
-                "Ticker Flow (intraday trades)"
+                "Unusual Activity — market-wide scan (default)",
+                "Options Chain — full chain for specific tickers",
+                "Ticker Flow — intraday flow for specific tickers"
             ],
-            "default": "unusual-activity"
+            "default": "unusual-activity",
+            "editor": "select"
         },
+
+        "underlyingType": {
+            "title": "Underlying Asset Type",
+            "type": "string",
+            "description": "Filter by asset class. 'All' fetches stocks, ETFs, and indices in one run.",
+            "enum": ["all", "stocks", "etfs", "indices"],
+            "enumTitles": [
+                "All (stocks + ETFs + indices)",
+                "Stocks only",
+                "ETFs only",
+                "Indices only"
+            ],
+            "default": "all",
+            "editor": "select"
+        },
+
         "tickers": {
             "title": "Tickers",
             "type": "array",
-            "description": "List of stock tickers to fetch data for. Required for 'options-chain' and 'ticker-flow' modes. Example: [\"AAPL\", \"NVDA\", \"SPY\"]",
-            "items": {
-                "type": "string"
-            },
-            "prefill": ["AAPL", "NVDA", "SPY"],
+            "description": "Required for options-chain and ticker-flow modes. Enter one or more stock symbols e.g. AAPL, NVDA, SPY.",
+            "items": { "type": "string" },
+            "default": [],
             "editor": "stringList"
         },
-        "underlyingType": {
-            "title": "Underlying Type",
-            "type": "string",
-            "description": "Filter unusual activity results by underlying asset type. Only applies to 'unusual-activity' mode.",
-            "enum": ["stocks", "etfs", "indices", "all"],
-            "enumTitles": ["Stocks only", "ETFs only", "Indices only", "All types"],
-            "default": "all"
-        },
+
         "optionType": {
             "title": "Option Type",
             "type": "string",
             "description": "Filter results to calls only, puts only, or both.",
-            "enum": ["call", "put", "all"],
-            "enumTitles": ["Calls only", "Puts only", "Calls & Puts"],
-            "default": "all"
+            "enum": ["all", "call", "put"],
+            "enumTitles": ["All (calls + puts)", "Calls only", "Puts only"],
+            "default": "all",
+            "editor": "select"
         },
+
         "minVolumeOIRatio": {
-            "title": "Minimum Volume/OI Ratio",
+            "title": "Minimum Volume / Open Interest Ratio",
             "type": "number",
-            "description": "Only return contracts where volume divided by open interest is above this threshold. Higher values = more unusual activity. Recommended: 1.5 or above.",
+            "description": "Only return contracts where today's volume is at least this multiple of open interest. Higher = stronger unusual signal. Barchart's own filter starts at 1.24. Default 1.5 returns cleaner signals.",
+            "default": 1.5,
             "minimum": 0,
-            "default": 1.5
+            "editor": "number"
         },
+
         "minPremium": {
             "title": "Minimum Total Premium ($)",
             "type": "integer",
-            "description": "Only return contracts where total premium (price × volume × 100) exceeds this dollar amount. Filters out small retail trades. Example: 50000 = $50k minimum.",
+            "description": "Only return contracts where total premium (lastPrice × volume × 100) is at least this value. Filters out low-dollar noise. Default $10,000.",
+            "default": 10000,
             "minimum": 0,
-            "default": 10000
+            "editor": "number"
         },
+
         "expirationDate": {
-            "title": "Expiration Date",
+            "title": "Expiration Date (options-chain mode only)",
             "type": "string",
-            "description": "Filter options chain to a specific expiration date. Format: YYYY-MM-DD. Leave blank to return all expirations. Only applies to 'options-chain' mode.",
-            "editor": "textfield"
+            "description": "Filter options chain to a specific expiry. Format: YYYY-MM-DD. Leave blank to return all expiries.",
+            "editor": "textfield",
+            "nullable": true
         },
+
         "maxResults": {
-            "title": "Max Results",
+            "title": "Max Results (advanced)",
             "type": "integer",
-            "description": "Maximum number of results to return. Useful for cost control.",
+            "description": "Maximum records returned across all asset types. Default 1,000 covers all meaningful unusual activity — the tail beyond this is very low Vol/OI ratio noise. Raise to 5,000 if you need the full long tail. Results are ordered by Vol/OI ratio descending, so a lower maxResults gives you the strongest signals only.",
+            "default": 1000,
             "minimum": 1,
             "maximum": 5000,
-            "default": 500
+            "editor": "number"
         }
+
     },
-    "required": ["mode"]
+    "required": []
 }
