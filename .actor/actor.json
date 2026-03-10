@@ -2,11 +2,11 @@
     "actorSpecification": 1,
     "name": "unusual-options-activity",
     "title": "Options Flow & Unusual Activity Scraper",
-    "description": "Scrapes real-time unusual options activity, full options chains, and ticker-level flow data from Barchart.",
-    "version": "1.0",
+    "description": "Scrapes real-time unusual options activity, full options chains, and ticker-level flow data from Barchart. Flat $1.50 per run. Includes recordId for deduplication across runs.",
+    "version": "1.1",
     "buildTag": "latest",
     "minMemoryMbytes": 512,
     "maxMemoryMbytes": 4096,
-    "readme": "./ACTOR.md",
+    "readme": "./README.md",
     "input": "./input_schema.json"
 }
