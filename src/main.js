@@ -5,11 +5,14 @@
  *
  * Flow:
  * 1. Read user input
- * 2. Bootstrap Barchart session (XSRF token)
- * 3. Route to the correct scraper based on `mode`
- * 4. Transform & filter results
- * 5. Push to Apify dataset (this is what users download)
- * 6. Charge via Pay-Per-Event pricing
+ * 2. Charge flat $1.50 actor-start fee (Pay-Per-Event)
+ * 3. Bootstrap Barchart session (XSRF token)
+ * 4. Route to correct scraper based on `mode`
+ * 5. Transform & filter results
+ * 6. Push run-summary record + all results to dataset
+ *
+ * Pricing: $1.50 flat per run — no per-record charge.
+ * Each run returns a full snapshot. Use recordId to deduplicate across runs.
  */
 
 import { Actor } from 'apify';
@@ -27,12 +30,20 @@ import {
     applyFilters,
 } from './transform.js';
 
+// Internal hard caps per asset type — prevents runaway runs and Barchart rate limits.
+// These are not user-configurable; maxResults is a softer cap applied after fetching.
+const INTERNAL_CAP_PER_TYPE = {
+    stocks: 1000,
+    etfs: 500,
+    indices: 500,
+};
+
 // ─── MAIN ────────────────────────────────────────────────────────────────────
 
 await Actor.init();
 
 try {
-    // ── 1. Read input ──────────────────────────────────────────────────────
+    // ── 1. Read input ──────────────────────────────────────────────────────────
     const input = await Actor.getInput() ?? {};
 
     const {
@@ -43,16 +54,17 @@ try {
         minVolumeOIRatio = 1.5,
         minPremium = 10000,
         expirationDate = null,
-        maxResults = 500,
+        maxResults = 1000,   // Advanced input — default covers all meaningful unusual activity
     } = input;
 
     console.log(`\n🚀 Options Flow Scraper starting`);
-    console.log(`   Mode: ${mode}`);
-    if (tickers.length > 0) console.log(`   Tickers: ${tickers.join(', ')}`);
-    console.log(`   Option type filter: ${optionType}`);
-    console.log(`   Min Volume/OI ratio: ${minVolumeOIRatio}`);
-    console.log(`   Min Premium: $${minPremium.toLocaleString()}`);
-    console.log(`   Max results: ${maxResults}\n`);
+    console.log(`   Mode:              ${mode}`);
+    console.log(`   Underlying type:   ${underlyingType}`);
+    if (tickers.length > 0) console.log(`   Tickers:           ${tickers.join(', ')}`);
+    console.log(`   Option type:       ${optionType}`);
+    console.log(`   Min Vol/OI ratio:  ${minVolumeOIRatio}`);
+    console.log(`   Min Premium:       $${minPremium.toLocaleString()}`);
+    console.log(`   Max results cap:   ${maxResults}\n`);
 
     // Validate mode
     if (!['unusual-activity', 'options-chain', 'ticker-flow'].includes(mode)) {
@@ -64,56 +76,48 @@ try {
         throw new Error(`Mode "${mode}" requires at least one ticker in the tickers input.`);
     }
 
-    // ── 2. Bootstrap Barchart session ──────────────────────────────────────
+    // ── 2. Bootstrap Barchart session ──────────────────────────────────────────
+    // NOTE: We charge AFTER data is successfully delivered (step 6).
+    // If the actor fails at any point before pushData completes, no charge is made.
     const session = await getBarchartSession();
-
-    // Filters object passed to applyFilters()
     const filters = { optionType, minVolumeOIRatio, minPremium };
 
-    // ── 3. Route to correct scraper ────────────────────────────────────────
+    // ── 4. Route to correct scraper ────────────────────────────────────────────
     let allResults = [];
 
-    // ── MODE: UNUSUAL ACTIVITY ─────────────────────────────────────────────
+    // ── MODE: UNUSUAL ACTIVITY ─────────────────────────────────────────────────
     if (mode === 'unusual-activity') {
-
-        // Confirmed Barchart values from HAR: 'stock' | 'etf' | 'index'
-        // (NOT 'stocks'/'etfs' — those are URL path segments, not API params)
-        const typeMap = {
-            stocks: 'stock',
-            etfs: 'etf',
-            indices: 'index',
-            all: null, // signals fetch all three
-        };
 
         const typesToFetch =
             underlyingType === 'all'
-                ? ['stock', 'etf', 'index']
-                : [typeMap[underlyingType] || 'stock'];
+                ? ['stocks', 'etfs', 'indices']
+                : [underlyingType];
 
         for (const assetType of typesToFetch) {
-            console.log(`📡 Fetching unusual activity for: ${assetType}s...`);
+            const cap = INTERNAL_CAP_PER_TYPE[assetType] ?? 1000;
+            const effectiveCap = Math.min(cap, maxResults);
 
-            const raw = await fetchUnusualActivity(session, assetType, maxResults - allResults.length);
-            console.log(`   → Got ${raw.length} raw records`);
+            console.log(`📡 Fetching unusual activity: ${assetType} (cap: ${effectiveCap})...`);
+
+            const raw = await fetchUnusualActivity(session, assetType, effectiveCap);
+            console.log(`   → ${raw.length} raw records fetched`);
 
             const transformed = raw.map(transformUnusualActivity);
             const filtered = transformed.filter((r) => applyFilters(r, filters));
 
             console.log(`   → ${filtered.length} records passed filters`);
             allResults.push(...filtered);
-
-            if (allResults.length >= maxResults) break;
         }
     }
 
-    // ── MODE: OPTIONS CHAIN ────────────────────────────────────────────────
+    // ── MODE: OPTIONS CHAIN ────────────────────────────────────────────────────
     else if (mode === 'options-chain') {
 
         for (const ticker of tickers) {
-            console.log(`📡 Fetching options chain for: ${ticker}...`);
+            console.log(`📡 Fetching options chain: ${ticker}...`);
 
             const raw = await fetchOptionsChain(session, ticker, expirationDate);
-            console.log(`   → Got ${raw.length} raw contracts`);
+            console.log(`   → ${raw.length} raw contracts`);
 
             const transformed = raw.map((r) => transformOptionsChain(r, ticker));
             const filtered = transformed.filter((r) => applyFilters(r, filters));
@@ -121,30 +125,27 @@ try {
             console.log(`   → ${filtered.length} contracts passed filters`);
             allResults.push(...filtered);
 
-            // Small delay between tickers to be polite to Barchart's servers
             if (tickers.indexOf(ticker) < tickers.length - 1) {
                 await new Promise((r) => setTimeout(r, 800));
             }
         }
     }
 
-    // ── MODE: TICKER FLOW ──────────────────────────────────────────────────
+    // ── MODE: TICKER FLOW ──────────────────────────────────────────────────────
     else if (mode === 'ticker-flow') {
 
         for (const ticker of tickers) {
-            console.log(`📡 Fetching flow for: ${ticker}...`);
+            console.log(`📡 Fetching flow: ${ticker}...`);
 
-            // Try fast HTTP approach first
             let raw = await fetchTickerFlow(session, ticker);
 
-            // If HTTP failed, fallback to Playwright browser
             if (raw === null) {
                 console.log(`   → HTTP failed, switching to browser scraping...`);
                 raw = await fetchTickerFlowWithBrowser(ticker);
             }
 
             if (raw && raw.length > 0) {
-                console.log(`   → Got ${raw.length} raw flow records`);
+                console.log(`   → ${raw.length} raw flow records`);
 
                 const transformed = raw.map((r) => transformTickerFlow(r, ticker));
                 const filtered = transformed.filter((r) => applyFilters(r, filters));
@@ -161,37 +162,61 @@ try {
         }
     }
 
-    // ── 4. Apply maxResults cap ────────────────────────────────────────────
-    if (allResults.length > maxResults) {
-        console.log(`\n✂️  Capping results at ${maxResults} (got ${allResults.length})`);
+    // ── 5. Apply maxResults cap ────────────────────────────────────────────────
+    // Results are already ordered by vol/OI ratio desc — so slicing keeps the
+    // strongest signals. Users who lower maxResults get the top N signals only.
+    const totalAvailable = allResults.length;
+    const truncated = totalAvailable > maxResults;
+
+    if (truncated) {
+        console.log(`\n✂️  Capping at maxResults=${maxResults} (${totalAvailable} available)`);
         allResults = allResults.slice(0, maxResults);
     }
 
-    console.log(`\n✅ Total results to save: ${allResults.length}`);
+    console.log(`\n✅ Total records to save: ${allResults.length}`);
 
-    // ── 5. Push results to dataset ─────────────────────────────────────────
-    // This is what users see when they download data from Apify
+    // ── 6. Push run summary + results to dataset ───────────────────────────────
+    // First record is always a run-summary so users can see totals at a glance.
+    // Filter it out downstream if you only want contract records:
+    //   results.filter(r => r.type !== 'run-summary')
+    const runSummary = {
+        type: 'run-summary',
+        mode,
+        underlyingType,
+        totalAvailable,
+        totalReturned: allResults.length,
+        truncated,
+        maxResults,
+        filtersApplied: {
+            optionType,
+            minVolumeOIRatio,
+            minPremium,
+        },
+        note: truncated
+            ? `Only top ${maxResults} signals returned (ordered by Vol/OI ratio desc). Raise maxResults to get more.`
+            : `All available signals returned. Each run is a full snapshot — use recordId to deduplicate across runs.`,
+        fetchedAt: new Date().toISOString(),
+    };
+
+    await Actor.pushData([runSummary, ...allResults]);
+    console.log(`💾 Saved run-summary + ${allResults.length} records to dataset.`);
+
+    // ── 7. Charge after successful delivery ────────────────────────────────────
+    // Charge only if results were actually delivered. This protects users from
+    // paying for failed or empty runs. If the actor crashes before reaching this
+    // line, no charge is made.
     if (allResults.length > 0) {
-        await Actor.pushData(allResults);
-        console.log(`💾 Saved ${allResults.length} records to dataset.`);
+        await Actor.charge({ eventName: 'actor-start', count: 1 });
+        console.log(`💳 Run fee charged — ${allResults.length} records delivered.`);
     } else {
-        console.log(`ℹ️  No results matched your filters. Try lowering minVolumeOIRatio or minPremium.`);
-    }
-
-    // ── 6. Pay-Per-Event charges ───────────────────────────────────────────
-    // Charge: $0.05 flat startup fee + $0.002 per result
-    // Users only pay for what they actually get back.
-    await Actor.charge({ eventName: 'actor-start', count: 1 });
-
-    if (allResults.length > 0) {
-        await Actor.charge({ eventName: 'result', count: allResults.length });
+        console.log(`ℹ️  No results matched your filters — run fee not charged.`);
+        console.log(`   Try lowering minVolumeOIRatio or minPremium to broaden your results.`);
     }
 
     console.log(`\n🎉 Actor finished successfully.`);
 
 } catch (err) {
     console.error(`\n❌ Actor failed: ${err.message}`);
-    // Re-throw so Apify marks the run as failed
     throw err;
 
 } finally {
