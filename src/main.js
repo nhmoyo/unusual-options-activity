@@ -31,11 +31,22 @@ import {
 } from './transform.js';
 
 // Internal hard caps per asset type — prevents runaway runs and Barchart rate limits.
+// Keys match Barchart's API values: 'stock' | 'etf' | 'index' (singular, confirmed from HAR).
 // These are not user-configurable; maxResults is a softer cap applied after fetching.
 const INTERNAL_CAP_PER_TYPE = {
-    stocks: 1000,
-    etfs: 500,
-    indices: 500,
+    stock: 1000,
+    etf: 500,
+    index: 500,
+};
+
+// Maps user-facing input values to Barchart API values (singular)
+const ASSET_TYPE_MAP = {
+    stocks: 'stock',
+    etfs: 'etf',
+    indices: 'index',
+    stock: 'stock',
+    etf: 'etf',
+    index: 'index',
 };
 
 // ─── MAIN ────────────────────────────────────────────────────────────────────
@@ -88,10 +99,11 @@ try {
     // ── MODE: UNUSUAL ACTIVITY ─────────────────────────────────────────────────
     if (mode === 'unusual-activity') {
 
+        // Barchart API requires singular: 'stock' | 'etf' | 'index' (NOT 'stocks' etc.)
         const typesToFetch =
             underlyingType === 'all'
-                ? ['stocks', 'etfs', 'indices']
-                : [underlyingType];
+                ? ['stock', 'etf', 'index']
+                : [ASSET_TYPE_MAP[underlyingType] || 'stock'];
 
         for (const assetType of typesToFetch) {
             const cap = INTERNAL_CAP_PER_TYPE[assetType] ?? 1000;
