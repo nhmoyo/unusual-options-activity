@@ -98,13 +98,16 @@ try {
     // If the actor fails at any point before pushData completes, no charge is made.
     const session = await getBarchartSession();
 
-    // options-chain uses a volume floor instead of vol/OI ratio — the ratio is
-    // meaningless for full-chain views where most strikes have low/zero volume.
-    // minPremium is shared across unusual-activity and options-chain to filter
-    // out low-dollar contracts. ticker-flow applies neither.
+    // Filter behaviour differs by mode:
+    // - unusual-activity: optionType + minVolumeOIRatio + minPremium
+    // - options-chain:    optionType + minVolume + minPremium (no ratio — meaningless on full chain)
+    // - ticker-flow:      optionType only — flow records have no OI so ratio is always null,
+    //                     and premium is often unavailable. Both are zeroed out.
     const filters =
         mode === 'options-chain'
             ? { optionType, minVolumeOIRatio: 0, minPremium, minVolume }
+        : mode === 'ticker-flow'
+            ? { optionType, minVolumeOIRatio: 0, minPremium: 0, minVolume: 0 }
             : { optionType, minVolumeOIRatio, minPremium, minVolume: 0 };
 
     // ── 3. Route to correct scraper ────────────────────────────────────────────
@@ -217,6 +220,8 @@ try {
             optionType,
             ...(mode === 'options-chain'
                 ? { minVolume, minPremium }
+                : mode === 'ticker-flow'
+                ? {}
                 : { minVolumeOIRatio, minPremium }
             ),
         },
