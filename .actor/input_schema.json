@@ -59,7 +59,7 @@
         "minPremium": {
             "title": "Minimum Total Premium ($)",
             "type": "integer",
-            "description": "Unusual-activity mode only. Only return contracts where total premium (lastPrice × volume × 100) is at least this value. Filters out low-dollar noise. Default $10,000.",
+            "description": "Unusual-activity and options-chain modes. Only return contracts where total premium (lastPrice × volume × 100) is at least this value. Filters out low-dollar noise. Default $10,000.",
             "default": 10000,
             "minimum": 0,
             "editor": "number"
