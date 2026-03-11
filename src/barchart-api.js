@@ -132,9 +132,12 @@ export async function fetchOptionsChain(session, ticker, expirationDate = null, 
 
 export async function fetchTickerFlow(session, ticker) {
     const tickerUpper = ticker.toUpperCase();
+
+    // Include both symbol and symbolCode — symbolCode may not be present on all
+    // flow responses, so symbol is the primary contract identifier here.
     const url = 'https://www.barchart.com/proxies/core-api/v1/options/flow' +
         '?symbol=' + tickerUpper +
-        '&fields=symbol,symbolType,strikePrice,expirationDate,lastPrice,' +
+        '&fields=symbol,symbolCode,symbolType,strikePrice,expirationDate,lastPrice,' +
         'bidPrice,askPrice,volume,openInterest,volatility,tradeCondition,tradeTime' +
         '&raw=1&limit=200';
 
