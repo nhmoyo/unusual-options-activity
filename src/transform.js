@@ -107,16 +107,7 @@ export function transformUnusualActivity(item) {
         raw.volumeOpenInterestRatio != null
             ? num(raw.volumeOpenInterestRatio)
             : volume != null && openInterest != null && openInterest > 0
-            ? parseFloat((volume / openInterest).toFixed(2))
-            : null;
-
-    const premium =
-        lastPrice != null && volume != null
-            ? Math.round(lastPrice * volume * 100)
-            : null;
-
-    const contractName = raw.symbolCode || item.symbolCode || null;
-    const tradeTime = raw.tradeTime
+            ? parseFloat((volume / openInterest).toFixed(4))
         ? new Date(raw.tradeTime * 1000).toISOString()
         : item.tradeTime || null;
 
@@ -171,16 +162,7 @@ export function transformOptionsChain(item, ticker) {
 
     const volumeOIRatio =
         volume != null && openInterest != null && openInterest > 0
-            ? parseFloat((volume / openInterest).toFixed(2))
-            : null;
-
-    const premium =
-        lastPrice != null && volume != null
-            ? Math.round(lastPrice * volume * 100)
-            : null;
-
-    const contractName = raw.symbolCode || item.symbolCode || null;
-    const retrievedAt = new Date().toISOString();
+            ? parseFloat((volume / openInterest).toFixed(4))
 
     const resolvedTicker = ticker || raw.baseSymbol || null;
     const type = (raw.symbolType || item.symbolType || '').toLowerCase() === 'call' ? 'call' : 'put';
