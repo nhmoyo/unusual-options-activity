@@ -5,8 +5,11 @@
  * mode. Only used when the direct HTTP API approach fails.
  *
  * Strategy: launch browser, intercept the XHR calls the page makes
- * to core-api.barchart.com, and capture the JSON responses directly.
- * This is cleaner than scraping the DOM table.
+ * to /proxies/core-api/ on barchart.com, and capture the JSON responses
+ * directly. This is cleaner than scraping the DOM table.
+ *
+ * Note: we intercept on the /proxies/core-api/ path (not core-api.barchart.com)
+ * because Barchart routes its API calls through the same origin as the main site.
  */
 
 import { chromium } from 'playwright';
@@ -27,22 +30,22 @@ export async function fetchTickerFlowWithBrowser(ticker) {
             'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 ' +
             '(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
     });
-
     const page = await context.newPage();
 
     // Array to collect intercepted flow data
     const capturedData = [];
 
-    // Intercept all responses from core-api.barchart.com
+    // Intercept all responses from /proxies/core-api/ that relate to options flow.
+    // Barchart routes API calls through www.barchart.com/proxies/core-api/,
+    // NOT a separate core-api.barchart.com subdomain.
     page.on('response', async (response) => {
         const url = response.url();
-
-        // Only capture options flow calls
-        if (url.includes('core-api.barchart.com') && url.includes('flow')) {
+        if (url.includes('/proxies/core-api/') && url.includes('flow')) {
             try {
                 const json = await response.json();
                 if (json.data && Array.isArray(json.data)) {
                     capturedData.push(...json.data);
+                    console.log(`   → Intercepted ${json.data.length} records from: ${url}`);
                 }
             } catch {
                 // Some responses may not be JSON — silently skip
@@ -61,12 +64,11 @@ export async function fetchTickerFlowWithBrowser(ticker) {
     try {
         await page.waitForSelector('table', { timeout: 15000 });
     } catch {
-        console.log(`⚠️  Flow table did not appear for ${ticker} — page may be empty.`);
+        console.log(`⚠️  Flow table did not appear for ${ticker} — page may be empty or require login.`);
     }
 
     // Give intercepted requests a moment to finish
     await page.waitForTimeout(2000);
-
     await browser.close();
 
     if (capturedData.length === 0) {
