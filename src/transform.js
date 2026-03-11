@@ -62,10 +62,8 @@ function buildContractKey(ticker, type, strike, expiry, tradeTime = null) {
  * - At or above ask = buyers aggressive = bullish
  * - At or below bid = sellers aggressive = bearish
  * - Between bid and ask = neutral
- * - Zero volume = no trades today = neutral regardless of price position
  */
-function deriveSentiment(lastPrice, bidPrice, askPrice, volume) {
-    if (volume === 0 || volume == null) return 'neutral';
+function deriveSentiment(lastPrice, bidPrice, askPrice) {
     if (lastPrice == null || bidPrice == null || askPrice == null) return 'neutral';
     const last = parseFloat(lastPrice);
     const bid = parseFloat(bidPrice);
@@ -107,7 +105,7 @@ export function transformUnusualActivity(item) {
         raw.volumeOpenInterestRatio != null
             ? num(raw.volumeOpenInterestRatio)
             : volume != null && openInterest != null && openInterest > 0
-            ? parseFloat((volume / openInterest).toFixed(4))
+            ? parseFloat((volume / openInterest).toFixed(2))
             : null;
 
     const premium =
@@ -150,7 +148,7 @@ export function transformUnusualActivity(item) {
         moneyness: num(raw.moneyness),
         premium,
         underlyingPrice: num(raw.baseLastPrice),
-        sentiment: deriveSentiment(lastPrice, bidPrice, askPrice, volume),
+        sentiment: deriveSentiment(lastPrice, bidPrice, askPrice),
         tradeTime,
         retrievedAt: new Date().toISOString(),
         source: 'barchart-unusual-activity',
@@ -171,7 +169,7 @@ export function transformOptionsChain(item, ticker) {
 
     const volumeOIRatio =
         volume != null && openInterest != null && openInterest > 0
-            ? parseFloat((volume / openInterest).toFixed(4))
+            ? parseFloat((volume / openInterest).toFixed(2))
             : null;
 
     const premium =
@@ -209,9 +207,8 @@ export function transformOptionsChain(item, ticker) {
         impliedVolatility: num(raw.volatility),
         weightedIV: num(raw.weightedImpliedVolatility),
         delta: num(raw.delta),
-        moneyness: num(raw.moneyness),
         premium,
-        sentiment: deriveSentiment(lastPrice, bidPrice, askPrice, volume),
+        sentiment: deriveSentiment(lastPrice, bidPrice, askPrice),
         retrievedAt,
         source: 'barchart-options-chain',
     };
@@ -219,32 +216,54 @@ export function transformOptionsChain(item, ticker) {
 
 /**
  * Transforms a raw ticker flow record into our output schema.
- * Note: flow endpoint uses `symbol` as the primary contract identifier,
- * not `symbolCode` — so we check both with symbol taking priority.
+ *
+ * Field mapping notes (confirmed from raw API log):
+ * - raw.lastPrice    = underlying stock price, NOT the option price.
+ *                      Renamed to underlyingPrice to match unusual-activity schema.
+ * - raw.bidPrice/askPrice = option bid/ask. Midpoint used as best proxy for option price.
+ * - raw.expirationDate   = full ISO timestamp ("2026-06-18T16:30:00-05:00") — stripped to date.
+ * - raw.tradeCondition   = single OPRA condition code ('i', 'm', etc.), not SWEEP/BLOCK/SPLIT.
+ * - raw.symbol       = primary contract identifier (symbolCode not returned by flow endpoint).
  */
 export function transformTickerFlow(item, ticker) {
     const raw = item.raw || item;
 
     const volume = num(raw.volume);
-    const lastPrice = num(raw.lastPrice);
+    const underlyingPrice = num(raw.lastPrice);   // stock price, not option price
     const bidPrice = num(raw.bidPrice);
     const askPrice = num(raw.askPrice);
 
-    const premium =
-        raw.premium != null
-            ? num(raw.premium)
-            : lastPrice != null && volume != null
-            ? Math.round(lastPrice * volume * 100)
+    // Option price: use bid/ask midpoint — flow endpoint has no separate option lastPrice field.
+    const optionPrice =
+        bidPrice != null && askPrice != null
+            ? parseFloat(((bidPrice + askPrice) / 2).toFixed(4))
             : null;
 
+    // Premium = option price × contracts × 100 shares per contract.
+    const premium =
+        optionPrice != null && volume != null
+            ? Math.round(optionPrice * volume * 100)
+            : null;
+
+    // OPRA condition codes returned by Barchart flow endpoint.
+    // 'i' = intermarket sweep order (ISO), 'm' = market maker / manual.
     const tradeConditionMap = {
+        'A': 'auto-exec',
+        'C': 'cancel',
+        'F': 'floor',
+        'I': 'iso',
+        'M': 'market-maker',
+        'Q': 'quote',
+        'S': 'spread',
+        'X': 'cross',
+        // Legacy Barchart named conditions (kept for browser-fallback compatibility)
         'SWEEP': 'sweep', 'BLOCK': 'block', 'SPLIT': 'split', 'FLOOR': 'floor',
     };
     const rawCondition = (raw.tradeCondition || '').toUpperCase();
     const tradeCondition = tradeConditionMap[rawCondition] || raw.tradeCondition || null;
 
     // Flow endpoint uses `symbol` as the primary contract identifier.
-    // symbolCode is included as a fallback in case it appears in some responses.
+    // symbolCode is not returned by this endpoint.
     const contractName = raw.symbol || raw.symbolCode || item.symbol || item.symbolCode || null;
 
     const tradeTime = raw.tradeTime
@@ -254,11 +273,14 @@ export function transformTickerFlow(item, ticker) {
     const resolvedTicker = ticker || raw.baseSymbol || null;
     const type = (raw.symbolType || item.symbolType || '').toLowerCase() === 'call' ? 'call' : 'put';
     const strike = num(raw.strikePrice);
-    const expiration = raw.expirationDate || item.expirationDate || null;
 
-    // recordId is always non-null — stable even when contractName is absent.
-    // tradeTime is included so two fills on the same contract at different
-    // times produce distinct recordIds.
+    // Strip time component from expirationDate — flow endpoint returns a full ISO
+    // timestamp ("2026-06-18T16:30:00-05:00") unlike other endpoints which return "YYYY-MM-DD".
+    const rawExp = raw.expirationDate || item.expirationDate || null;
+    const expiration = rawExp ? rawExp.split('T')[0] : null;
+
+    // recordId is always non-null. tradeTime is included so two fills on the
+    // same contract at different times produce distinct recordIds.
     const recordId = simpleHash(buildContractKey(resolvedTicker, type, strike, expiration, tradeTime));
 
     return {
@@ -269,15 +291,19 @@ export function transformTickerFlow(item, ticker) {
         strike,
         expiration,
         daysToExpiry: num(raw.daysToExpiration),
-        lastPrice,
+        optionPrice,
         bid: bidPrice,
         ask: askPrice,
+        underlyingPrice,
         volume,
         openInterest: num(raw.openInterest),
         impliedVolatility: num(raw.volatility),
         premium,
         tradeCondition,
-        sentiment: deriveSentiment(lastPrice, bidPrice, askPrice, volume),
+        // Sentiment cannot be derived for flow records: the flow endpoint has no
+        // option last-trade price, only bid/ask. Using the midpoint as optionPrice
+        // means deriveSentiment would always return 'neutral' — so we omit it.
+        sentiment: null,
         tradeTime,
         retrievedAt: new Date().toISOString(),
         source: 'barchart-ticker-flow',
