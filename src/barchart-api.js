@@ -9,6 +9,39 @@ const UNUSUAL_ACTIVITY_FIELDS = [
 
 const BASE_URL = 'https://www.barchart.com/proxies/core-api/v1/options/get';
 
+// Maximum number of times any single request will be retried on a 429.
+// Waits grow exponentially: 10s → 20s → 40s. If all retries are exhausted, throws.
+const MAX_RETRIES = 3;
+
+/**
+ * Fetches a URL with bounded exponential-backoff retry on 429.
+ * Throws on any non-429 error status, or after MAX_RETRIES 429 responses.
+ *
+ * @param {string} url
+ * @param {object} options - fetch options (headers etc.)
+ * @param {number} attempt - internal retry counter, starts at 1
+ * @returns {Promise<Response>}
+ */
+async function fetchWithRetry(url, options, attempt = 1) {
+    const response = await fetch(url, options);
+
+    if (response.status === 429) {
+        if (attempt > MAX_RETRIES) {
+            throw new Error(
+                'Barchart rate limit (429) exceeded after ' + MAX_RETRIES + ' retries. ' +
+                'Try again in a few minutes or reduce maxResults.'
+            );
+        }
+        const waitMs = 10000 * attempt; // 10s, 20s, 40s
+        console.log('   Rate limited — attempt ' + attempt + '/' + MAX_RETRIES +
+                    ', waiting ' + (waitMs / 1000) + 's before retry...');
+        await new Promise(r => setTimeout(r, waitMs));
+        return fetchWithRetry(url, options, attempt + 1);
+    }
+
+    return response;
+}
+
 function buildHeaders(session) {
     return {
         'Accept': 'application/json',
@@ -42,16 +75,10 @@ export async function fetchUnusualActivityPage(session, baseSymbolTypes = 'stock
 
     const url = BASE_URL + '?' + params.toString();
 
-    const response = await fetch(url, {
+    const response = await fetchWithRetry(url, {
         method: 'GET',
         headers: buildHeaders(session),
     });
-
-    if (response.status === 429) {
-        console.log('   Rate limited on page ' + page + ' — waiting 10s...');
-        await new Promise(r => setTimeout(r, 10000));
-        return fetchUnusualActivityPage(session, baseSymbolTypes, page, limit);
-    }
 
     if (!response.ok) {
         const text = await response.text();
@@ -107,7 +134,7 @@ export async function fetchOptionsChain(session, ticker, expirationDate = null, 
         }
 
         const url = BASE_URL + '?' + params.toString();
-        const response = await fetch(url, {
+        const response = await fetchWithRetry(url, {
             method: 'GET',
             headers: Object.assign({}, buildHeaders(session), {
                 'Referer': 'https://www.barchart.com/stocks/quotes/' + tickerUpper + '/options',
@@ -141,7 +168,7 @@ export async function fetchTickerFlow(session, ticker) {
         'bidPrice,askPrice,volume,openInterest,volatility,tradeCondition,tradeTime' +
         '&raw=1&limit=200';
 
-    const response = await fetch(url, {
+    const response = await fetchWithRetry(url, {
         method: 'GET',
         headers: Object.assign({}, buildHeaders(session), {
             'Referer': 'https://www.barchart.com/stocks/quotes/' + tickerUpper + '/options-flow',
