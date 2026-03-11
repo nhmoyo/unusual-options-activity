@@ -4,7 +4,6 @@
     "type": "object",
     "schemaVersion": 1,
     "properties": {
-
         "mode": {
             "title": "Mode",
             "type": "string",
@@ -18,7 +17,6 @@
             "default": "unusual-activity",
             "editor": "select"
         },
-
         "underlyingType": {
             "title": "Underlying Asset Type",
             "type": "string",
@@ -33,7 +31,6 @@
             "default": "all",
             "editor": "select"
         },
-
         "tickers": {
             "title": "Tickers",
             "type": "array",
@@ -42,7 +39,6 @@
             "default": [],
             "editor": "stringList"
         },
-
         "optionType": {
             "title": "Option Type",
             "type": "string",
@@ -52,25 +48,30 @@
             "default": "all",
             "editor": "select"
         },
-
         "minVolumeOIRatio": {
             "title": "Minimum Volume / Open Interest Ratio",
             "type": "number",
-            "description": "Only return contracts where today's volume is at least this multiple of open interest. Higher = stronger unusual signal. Barchart's own filter starts at 1.24. Default 1.5 returns cleaner signals.",
+            "description": "Unusual-activity mode only. Only return contracts where today's volume is at least this multiple of open interest. Higher = stronger unusual signal. Barchart's own filter starts at 1.24. Default 1.5 returns cleaner signals.",
             "default": 1.5,
             "minimum": 0,
             "editor": "number"
         },
-
         "minPremium": {
             "title": "Minimum Total Premium ($)",
             "type": "integer",
-            "description": "Only return contracts where total premium (lastPrice × volume × 100) is at least this value. Filters out low-dollar noise. Default $10,000.",
+            "description": "Unusual-activity mode only. Only return contracts where total premium (lastPrice × volume × 100) is at least this value. Filters out low-dollar noise. Default $10,000.",
             "default": 10000,
             "minimum": 0,
             "editor": "number"
         },
-
+        "minVolume": {
+            "title": "Minimum Volume (options-chain mode only)",
+            "type": "integer",
+            "description": "Options-chain mode only. Only return contracts where today's volume is at least this value. Useful for filtering out illiquid zero-volume strikes. Default 0 returns all contracts including zero-volume strikes.",
+            "default": 0,
+            "minimum": 0,
+            "editor": "number"
+        },
         "expirationDate": {
             "title": "Expiration Date (options-chain mode only)",
             "type": "string",
@@ -78,7 +79,6 @@
             "editor": "textfield",
             "nullable": true
         },
-
         "maxResults": {
             "title": "Max Results (advanced)",
             "type": "integer",
@@ -88,7 +88,6 @@
             "maximum": 5000,
             "editor": "number"
         }
-
     },
     "required": []
 }
