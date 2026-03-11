@@ -217,15 +217,5 @@ export async function fetchTickerFlow(session, ticker) {
     }
 
     const json = await response.json();
-
-    // TEMP: log the first raw record so we can verify field names before transform.
-    // Remove this block once field mapping is confirmed correct.
-    if (json.data && json.data.length > 0) {
-        const sample = json.data[0];
-        const raw = sample.raw || sample;
-        console.log('\u{1F4CB} RAW FLOW FIELDS (first record):', Object.keys(raw).join(', '));
-        console.log('\u{1F4CB} RAW FLOW SAMPLE:', JSON.stringify(raw, null, 2));
-    }
-
     return json.data || null;
 }
