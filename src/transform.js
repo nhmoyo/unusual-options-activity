@@ -167,6 +167,8 @@ export function transformOptionsChain(item, ticker) {
 
 /**
  * Transforms a raw ticker flow record into our output schema.
+ * Note: flow endpoint uses `symbol` as the primary contract identifier,
+ * not `symbolCode` — so we check both with symbol taking priority.
  */
 export function transformTickerFlow(item, ticker) {
     const raw = item.raw || item;
@@ -189,7 +191,10 @@ export function transformTickerFlow(item, ticker) {
     const rawCondition = (raw.tradeCondition || '').toUpperCase();
     const tradeCondition = tradeConditionMap[rawCondition] || raw.tradeCondition || null;
 
-    const contractName = raw.symbolCode || item.symbolCode || null;
+    // Flow endpoint uses `symbol` as the primary contract identifier.
+    // symbolCode is included as a fallback in case it appears in some responses.
+    const contractName = raw.symbol || raw.symbolCode || item.symbol || item.symbolCode || null;
+
     const tradeTime = raw.tradeTime
         ? new Date(raw.tradeTime * 1000).toISOString()
         : item.tradeTime || null;
@@ -223,9 +228,14 @@ export function transformTickerFlow(item, ticker) {
 
 /**
  * Applies user filters to a transformed result.
+ *
+ * Filter behaviour by mode:
+ * - unusual-activity: applies optionType + minVolumeOIRatio + minPremium
+ * - options-chain:    applies optionType + minVolume only (ratio/premium passed as 0)
+ * - ticker-flow:      applies optionType only (ratio/premium/volume passed as 0)
  */
 export function applyFilters(record, filters) {
-    const { optionType, minVolumeOIRatio, minPremium } = filters;
+    const { optionType, minVolumeOIRatio, minPremium, minVolume } = filters;
 
     if (optionType && optionType !== 'all') {
         if (record.type !== optionType) return false;
@@ -237,6 +247,11 @@ export function applyFilters(record, filters) {
 
     if (minPremium != null && minPremium > 0) {
         if (record.premium == null || record.premium < minPremium) return false;
+    }
+
+    // options-chain mode: filter out illiquid/zero-volume contracts
+    if (minVolume != null && minVolume > 0) {
+        if (record.volume == null || record.volume < minVolume) return false;
     }
 
     return true;
