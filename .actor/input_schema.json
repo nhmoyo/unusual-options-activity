@@ -67,8 +67,8 @@
         "minVolume": {
             "title": "Minimum Volume (options-chain mode only)",
             "type": "integer",
-            "description": "Options-chain mode only. Only return contracts where today's volume is at least this value. Useful for filtering out illiquid zero-volume strikes. Default 0 returns all contracts including zero-volume strikes.",
-            "default": 0,
+            "description": "Options-chain mode only. Only return contracts where today's volume is at least this value. Filters out zero-volume strikes with no trading activity. Default 1 returns only contracts traded today. Set to 0 to include all strikes including untouched ones.",
+            "default": 1,
             "minimum": 0,
             "editor": "number"
         },
