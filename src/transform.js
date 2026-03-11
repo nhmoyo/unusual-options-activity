@@ -4,9 +4,21 @@
  * Converts raw Barchart API records into clean output schema.
  * Computes derived fields: volumeOIRatio, premium, sentiment, recordId.
  *
- * recordId is a deterministic hash of contractName + tradeTime.
- * Users can use this to deduplicate across multiple runs —
- * same contract at the same tradeTime = same recordId.
+ * recordId is a deterministic hash of a stable contract key.
+ * The key is built from fields that are always present (ticker, type, strike,
+ * expiration) so recordId is never null even when symbolCode is missing.
+ *
+ * Key strategy by mode:
+ *   unusual-activity / ticker-flow  →  ticker|type|strike|expiration|tradeTime
+ *   options-chain                   →  ticker|type|strike|expiration
+ *
+ * tradeTime is included for trade-level modes so that two fills on the same
+ * contract at different times produce different recordIds.
+ * It is omitted for options-chain because the chain is a snapshot — the
+ * contract itself is the stable identity, regardless of when it was fetched.
+ *
+ * contractName (symbolCode) is still returned as a field when available,
+ * but recordId no longer depends on it.
  */
 
 /**
@@ -21,6 +33,28 @@ function simpleHash(str) {
         hash = hash & hash; // Convert to 32-bit integer
     }
     return Math.abs(hash).toString(36);
+}
+
+/**
+ * Builds a stable, human-readable contract key from fields that are always
+ * present. Used as the input to simpleHash() for recordId generation.
+ *
+ * @param {string} ticker       - e.g. 'TSLA'
+ * @param {string} type         - 'call' | 'put'
+ * @param {number|null} strike  - e.g. 490
+ * @param {string|null} expiry  - e.g. '2026-03-20'
+ * @param {string|null} tradeTime - ISO string; pass null for snapshot modes
+ * @returns {string}
+ */
+function buildContractKey(ticker, type, strike, expiry, tradeTime = null) {
+    const parts = [
+        (ticker || 'UNKNOWN').toUpperCase(),
+        (type || 'unknown').toLowerCase(),
+        strike != null ? String(strike) : 'nostrike',
+        expiry || 'noexpiry',
+    ];
+    if (tradeTime) parts.push(tradeTime);
+    return parts.join('|');
 }
 
 /**
@@ -84,17 +118,23 @@ export function transformUnusualActivity(item) {
         ? new Date(raw.tradeTime * 1000).toISOString()
         : item.tradeTime || null;
 
-    const recordId = contractName && tradeTime
-        ? simpleHash(contractName + '|' + tradeTime)
-        : null;
+    const ticker = raw.baseSymbol || item.baseSymbol || null;
+    const type = (raw.symbolType || item.symbolType || '').toLowerCase() === 'call' ? 'call' : 'put';
+    const strike = num(raw.strikePrice);
+    const expiration = raw.expirationDate || item.expirationDate || null;
+
+    // recordId is always non-null — stable even when symbolCode is absent.
+    // tradeTime is included so two fills on the same contract at different
+    // times produce distinct recordIds.
+    const recordId = simpleHash(buildContractKey(ticker, type, strike, expiration, tradeTime));
 
     return {
         recordId,
-        ticker: raw.baseSymbol || item.baseSymbol || null,
+        ticker,
         contractName,
-        type: (raw.symbolType || item.symbolType || '').toLowerCase() === 'call' ? 'call' : 'put',
-        strike: num(raw.strikePrice),
-        expiration: raw.expirationDate || item.expirationDate || null,
+        type,
+        strike,
+        expiration,
         daysToExpiry: num(raw.daysToExpiration),
         lastPrice,
         bid: bidPrice,
@@ -139,15 +179,24 @@ export function transformOptionsChain(item, ticker) {
 
     const contractName = raw.symbolCode || item.symbolCode || null;
     const retrievedAt = new Date().toISOString();
-    const recordId = contractName ? simpleHash(contractName + '|' + retrievedAt) : null;
+
+    const resolvedTicker = ticker || raw.baseSymbol || null;
+    const type = (raw.symbolType || item.symbolType || '').toLowerCase() === 'call' ? 'call' : 'put';
+    const strike = num(raw.strikePrice);
+    const expiration = raw.expirationDate || item.expirationDate || null;
+
+    // recordId is stable across runs — same contract always produces the same id.
+    // tradeTime is intentionally omitted: options-chain is a snapshot, so the
+    // contract identity (not the moment of fetch) is what matters for dedup.
+    const recordId = simpleHash(buildContractKey(resolvedTicker, type, strike, expiration));
 
     return {
         recordId,
-        ticker: ticker || raw.baseSymbol || null,
+        ticker: resolvedTicker,
         contractName,
-        type: (raw.symbolType || item.symbolType || '').toLowerCase() === 'call' ? 'call' : 'put',
-        strike: num(raw.strikePrice),
-        expiration: raw.expirationDate || item.expirationDate || null,
+        type,
+        strike,
+        expiration,
         daysToExpiry: num(raw.daysToExpiration),
         lastPrice,
         bid: bidPrice,
@@ -199,17 +248,23 @@ export function transformTickerFlow(item, ticker) {
         ? new Date(raw.tradeTime * 1000).toISOString()
         : item.tradeTime || null;
 
-    const recordId = contractName && tradeTime
-        ? simpleHash(contractName + '|' + tradeTime)
-        : null;
+    const resolvedTicker = ticker || raw.baseSymbol || null;
+    const type = (raw.symbolType || item.symbolType || '').toLowerCase() === 'call' ? 'call' : 'put';
+    const strike = num(raw.strikePrice);
+    const expiration = raw.expirationDate || item.expirationDate || null;
+
+    // recordId is always non-null — stable even when contractName is absent.
+    // tradeTime is included so two fills on the same contract at different
+    // times produce distinct recordIds.
+    const recordId = simpleHash(buildContractKey(resolvedTicker, type, strike, expiration, tradeTime));
 
     return {
         recordId,
-        ticker: ticker || raw.baseSymbol || null,
+        ticker: resolvedTicker,
         contractName,
-        type: (raw.symbolType || item.symbolType || '').toLowerCase() === 'call' ? 'call' : 'put',
-        strike: num(raw.strikePrice),
-        expiration: raw.expirationDate || item.expirationDate || null,
+        type,
+        strike,
+        expiration,
         daysToExpiry: num(raw.daysToExpiration),
         lastPrice,
         bid: bidPrice,
