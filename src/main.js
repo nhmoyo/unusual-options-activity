@@ -5,11 +5,11 @@
  *
  * Flow:
  * 1. Read user input
- * 2. Charge flat $1.50 actor-start fee (Pay-Per-Event)
- * 3. Bootstrap Barchart session (XSRF token)
- * 4. Route to correct scraper based on `mode`
- * 5. Transform & filter results
- * 6. Push run-summary record + all results to dataset
+ * 2. Bootstrap Barchart session (XSRF token)
+ * 3. Route to correct scraper based on `mode`
+ * 4. Transform & filter results
+ * 5. Push run-summary record + all results to dataset
+ * 6. Charge flat $1.50 actor-start fee (Pay-Per-Event) after successful delivery
  *
  * Pricing: $1.50 flat per run — no per-record charge.
  * Each run returns a full snapshot. Use recordId to deduplicate across runs.
@@ -64,6 +64,7 @@ try {
         optionType = 'all',
         minVolumeOIRatio = 1.5,
         minPremium = 10000,
+        minVolume = 0,       // options-chain mode: filter illiquid contracts by raw volume
         expirationDate = null,
         maxResults = 1000,   // Advanced input — default covers all meaningful unusual activity
     } = input;
@@ -73,8 +74,12 @@ try {
     console.log(`   Underlying type:   ${underlyingType}`);
     if (tickers.length > 0) console.log(`   Tickers:           ${tickers.join(', ')}`);
     console.log(`   Option type:       ${optionType}`);
-    console.log(`   Min Vol/OI ratio:  ${minVolumeOIRatio}`);
-    console.log(`   Min Premium:       $${minPremium.toLocaleString()}`);
+    if (mode === 'options-chain') {
+        console.log(`   Min Volume:        ${minVolume}`);
+    } else {
+        console.log(`   Min Vol/OI ratio:  ${minVolumeOIRatio}`);
+        console.log(`   Min Premium:       $${minPremium.toLocaleString()}`);
+    }
     console.log(`   Max results cap:   ${maxResults}\n`);
 
     // Validate mode
@@ -91,9 +96,16 @@ try {
     // NOTE: We charge AFTER data is successfully delivered (step 6).
     // If the actor fails at any point before pushData completes, no charge is made.
     const session = await getBarchartSession();
-    const filters = { optionType, minVolumeOIRatio, minPremium };
 
-    // ── 4. Route to correct scraper ────────────────────────────────────────────
+    // options-chain uses a volume floor instead of vol/OI ratio — the ratio is
+    // meaningless for full-chain views where most strikes have low/zero volume.
+    // ticker-flow has no vol/OI ratio either, so same treatment applies.
+    const filters =
+        mode === 'options-chain'
+            ? { optionType, minVolumeOIRatio: 0, minPremium: 0, minVolume }
+            : { optionType, minVolumeOIRatio, minPremium, minVolume: 0 };
+
+    // ── 3. Route to correct scraper ────────────────────────────────────────────
     let allResults = [];
 
     // ── MODE: UNUSUAL ACTIVITY ─────────────────────────────────────────────────
@@ -174,7 +186,7 @@ try {
         }
     }
 
-    // ── 5. Apply maxResults cap ────────────────────────────────────────────────
+    // ── 4. Apply maxResults cap ────────────────────────────────────────────────
     // Results are already ordered by vol/OI ratio desc — so slicing keeps the
     // strongest signals. Users who lower maxResults get the top N signals only.
     const totalAvailable = allResults.length;
@@ -187,7 +199,7 @@ try {
 
     console.log(`\n✅ Total records to save: ${allResults.length}`);
 
-    // ── 6. Push run summary + results to dataset ───────────────────────────────
+    // ── 5. Push run summary + results to dataset ───────────────────────────────
     // First record is always a run-summary so users can see totals at a glance.
     // Filter it out downstream if you only want contract records:
     //   results.filter(r => r.type !== 'run-summary')
@@ -201,8 +213,10 @@ try {
         maxResults,
         filtersApplied: {
             optionType,
-            minVolumeOIRatio,
-            minPremium,
+            ...(mode === 'options-chain'
+                ? { minVolume }
+                : { minVolumeOIRatio, minPremium }
+            ),
         },
         note: truncated
             ? `Only top ${maxResults} signals returned (ordered by Vol/OI ratio desc). Raise maxResults to get more.`
@@ -213,7 +227,7 @@ try {
     await Actor.pushData([runSummary, ...allResults]);
     console.log(`💾 Saved run-summary + ${allResults.length} records to dataset.`);
 
-    // ── 7. Charge after successful delivery ────────────────────────────────────
+    // ── 6. Charge after successful delivery ────────────────────────────────────
     // Charge only if results were actually delivered. This protects users from
     // paying for failed or empty runs. If the actor crashes before reaching this
     // line, no charge is made.
