@@ -219,8 +219,10 @@ try {
             ),
         },
         note: truncated
-            ? `Only top ${maxResults} signals returned (ordered by Vol/OI ratio desc). Raise maxResults to get more.`
-            : `All available signals returned. Each run is a full snapshot — use recordId to deduplicate across runs.`,
+            ? `Only top ${maxResults} results returned. Raise maxResults to get more.` +
+              (mode === 'unusual-activity' ? ' Results ordered by Vol/OI ratio desc — strongest signals first.' :
+               mode === 'options-chain'    ? ' Results ordered by strike price asc.' : '')
+            : `All available results returned. Each run is a full snapshot — use recordId to deduplicate across runs.`,
         fetchedAt: new Date().toISOString(),
     };
 
