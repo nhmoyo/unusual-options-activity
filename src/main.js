@@ -76,6 +76,7 @@ try {
     console.log(`   Option type:       ${optionType}`);
     if (mode === 'options-chain') {
         console.log(`   Min Volume:        ${minVolume}`);
+        console.log(`   Min Premium:       $${minPremium.toLocaleString()}`);
     } else {
         console.log(`   Min Vol/OI ratio:  ${minVolumeOIRatio}`);
         console.log(`   Min Premium:       $${minPremium.toLocaleString()}`);
@@ -99,10 +100,11 @@ try {
 
     // options-chain uses a volume floor instead of vol/OI ratio — the ratio is
     // meaningless for full-chain views where most strikes have low/zero volume.
-    // ticker-flow has no vol/OI ratio either, so same treatment applies.
+    // minPremium is shared across unusual-activity and options-chain to filter
+    // out low-dollar contracts. ticker-flow applies neither.
     const filters =
         mode === 'options-chain'
-            ? { optionType, minVolumeOIRatio: 0, minPremium: 0, minVolume }
+            ? { optionType, minVolumeOIRatio: 0, minPremium, minVolume }
             : { optionType, minVolumeOIRatio, minPremium, minVolume: 0 };
 
     // ── 3. Route to correct scraper ────────────────────────────────────────────
@@ -214,7 +216,7 @@ try {
         filtersApplied: {
             optionType,
             ...(mode === 'options-chain'
-                ? { minVolume }
+                ? { minVolume, minPremium }
                 : { minVolumeOIRatio, minPremium }
             ),
         },
