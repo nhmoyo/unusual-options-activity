@@ -64,7 +64,7 @@ try {
         optionType = 'all',
         minVolumeOIRatio = 1.5,
         minPremium = 10000,
-        minVolume = 0,       // options-chain mode: filter illiquid contracts by raw volume
+        minVolume = 1,       // options-chain mode: default 1 filters zero-volume strikes
         expirationDate = null,
         maxResults = 1000,   // Advanced input — default covers all meaningful unusual activity
     } = input;
