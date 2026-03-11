@@ -14,6 +14,34 @@ const BASE_URL = 'https://www.barchart.com/proxies/core-api/v1/options/get';
 const MAX_RETRIES = 3;
 
 /**
+ * Deduplicates raw Barchart records by contract identity.
+ * Barchart can return the same record on two consecutive pages when a record
+ * sits exactly on a page boundary. We deduplicate using a key of:
+ *   symbolCode (if present) OR baseSymbol + symbolType + strikePrice + expirationDate
+ *
+ * Called after all pages are collected, before slicing to maxResults.
+ *
+ * @param {Array} records - raw records from Barchart API
+ * @returns {Array} deduplicated records, preserving original order
+ */
+function deduplicateRecords(records) {
+    const seen = new Set();
+    return records.filter(item => {
+        const raw = item.raw || item;
+        // Prefer symbolCode as it's the most specific identifier.
+        // Fall back to a composite key when symbolCode is absent (usual-activity).
+        const key = raw.symbolCode ||
+            (raw.baseSymbol || '') + '|' +
+            (raw.symbolType || '') + '|' +
+            (raw.strikePrice || '') + '|' +
+            (raw.expirationDate || '');
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+    });
+}
+
+/**
  * Fetches a URL with bounded exponential-backoff retry on 429.
  * Throws on any non-429 error status, or after MAX_RETRIES 429 responses.
  *
@@ -108,7 +136,11 @@ export async function fetchUnusualActivity(session, baseSymbolTypes = 'stock', m
         await new Promise(r => setTimeout(r, 2000));
     }
 
-    return allData.slice(0, maxResults);
+    const deduped = deduplicateRecords(allData);
+    if (deduped.length < allData.length) {
+        console.log('   → Removed ' + (allData.length - deduped.length) + ' duplicate(s) from pagination overlap.');
+    }
+    return deduped.slice(0, maxResults);
 }
 
 export async function fetchOptionsChain(session, ticker, expirationDate = null, maxResults = 500) {
@@ -154,7 +186,11 @@ export async function fetchOptionsChain(session, ticker, expirationDate = null, 
         await new Promise(r => setTimeout(r, 2000));
     }
 
-    return allData.slice(0, maxResults);
+    const deduped = deduplicateRecords(allData);
+    if (deduped.length < allData.length) {
+        console.log('   → Removed ' + (allData.length - deduped.length) + ' duplicate(s) from pagination overlap.');
+    }
+    return deduped.slice(0, maxResults);
 }
 
 export async function fetchTickerFlow(session, ticker) {
