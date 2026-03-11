@@ -62,8 +62,10 @@ function buildContractKey(ticker, type, strike, expiry, tradeTime = null) {
  * - At or above ask = buyers aggressive = bullish
  * - At or below bid = sellers aggressive = bearish
  * - Between bid and ask = neutral
+ * - Zero volume = no trades today = neutral regardless of price position
  */
-function deriveSentiment(lastPrice, bidPrice, askPrice) {
+function deriveSentiment(lastPrice, bidPrice, askPrice, volume) {
+    if (volume === 0 || volume == null) return 'neutral';
     if (lastPrice == null || bidPrice == null || askPrice == null) return 'neutral';
     const last = parseFloat(lastPrice);
     const bid = parseFloat(bidPrice);
@@ -148,7 +150,7 @@ export function transformUnusualActivity(item) {
         moneyness: num(raw.moneyness),
         premium,
         underlyingPrice: num(raw.baseLastPrice),
-        sentiment: deriveSentiment(lastPrice, bidPrice, askPrice),
+        sentiment: deriveSentiment(lastPrice, bidPrice, askPrice, volume),
         tradeTime,
         retrievedAt: new Date().toISOString(),
         source: 'barchart-unusual-activity',
@@ -207,8 +209,9 @@ export function transformOptionsChain(item, ticker) {
         impliedVolatility: num(raw.volatility),
         weightedIV: num(raw.weightedImpliedVolatility),
         delta: num(raw.delta),
+        moneyness: num(raw.moneyness),
         premium,
-        sentiment: deriveSentiment(lastPrice, bidPrice, askPrice),
+        sentiment: deriveSentiment(lastPrice, bidPrice, askPrice, volume),
         retrievedAt,
         source: 'barchart-options-chain',
     };
@@ -274,7 +277,7 @@ export function transformTickerFlow(item, ticker) {
         impliedVolatility: num(raw.volatility),
         premium,
         tradeCondition,
-        sentiment: deriveSentiment(lastPrice, bidPrice, askPrice),
+        sentiment: deriveSentiment(lastPrice, bidPrice, askPrice, volume),
         tradeTime,
         retrievedAt: new Date().toISOString(),
         source: 'barchart-ticker-flow',
