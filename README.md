@@ -10,7 +10,7 @@ This actor connects to Barchart's internal data API to extract structured option
 
 - **Unusual Activity** — market-wide scan returning contracts where volume/OI ratio signals unusual positioning. Covers stocks, ETFs, and indices.
 - **Options Chain** — full contract-level chain for one or more specific tickers, with optional expiry filtering.
-- **Ticker Flow** — intraday order flow for specific tickers, including sweep and block trade classification.
+- **Ticker Flow** — intraday order flow for specific tickers, including trade condition classification (ISO, electronic, floor, etc.).
 
 Results are returned as clean, structured JSON — ready for downstream use in spreadsheets, Python, trading dashboards, or automated alert systems.
 
@@ -34,18 +34,19 @@ Results are returned as clean, structured JSON — ready for downstream use in s
 | `underlyingType` | string | `all` | Asset class filter: `all`, `stocks`, `etfs`, or `indices`. |
 | `tickers` | array | `[]` | Required for `options-chain` and `ticker-flow` modes. E.g. `["AAPL", "NVDA", "SPY"]`. |
 | `optionType` | string | `all` | Filter to `call`, `put`, or `all`. |
-| `minVolumeOIRatio` | number | `1.5` | Minimum Vol/OI ratio. Higher = stronger unusual signal. |
-| `minPremium` | number | `10000` | Minimum total premium in USD. Filters out low-dollar noise. |
+| `minVolumeOIRatio` | number | `1.5` | Minimum Vol/OI ratio. Higher = stronger unusual signal. Not applied to `ticker-flow`. |
+| `minVolume` | number | `1` | Minimum contract volume. Filters out zero-volume noise. |
+| `minPremium` | number | `10000` | Minimum total premium in USD. Applied to `unusual-activity` and `options-chain`. Not applied to `ticker-flow`. |
 | `expirationDate` | string | `null` | For `options-chain` mode only. Format: `YYYY-MM-DD`. |
-| `maxResults` | integer | `1000` | Advanced. Maximum records returned. Results ordered by Vol/OI ratio desc — lower values return only the strongest signals. Max: 5,000. |
+| `maxResults` | integer | `1000` | Maximum records returned. Results are ordered by Vol/OI ratio desc — lower values return only the strongest signals. Max: 5,000. |
 
 ---
 
 ## Output Schema
 
-Every record includes a `recordId` — a deterministic hash of `contractName + tradeTime`. Use this to deduplicate records when running the actor multiple times per day, since each run returns a full snapshot rather than incremental data.
+Every run begins with a `run-summary` record, followed by contract records.
 
-The first record in every dataset is always a `run-summary` object:
+### Run Summary
 
 ```json
 {
@@ -66,37 +67,7 @@ The first record in every dataset is always a `run-summary` object:
 }
 ```
 
-Contract records follow this schema:
-
-```json
-{
-  "recordId": "3f8a1b",
-  "ticker": "TSLA",
-  "contractName": "TSLA|20260320|490.00P",
-  "type": "put",
-  "strike": 490,
-  "expiration": "2026-03-20",
-  "daysToExpiry": 10,
-  "lastPrice": 97.80,
-  "bid": 90.05,
-  "ask": 90.95,
-  "volume": 17200,
-  "openInterest": 158,
-  "volumeOIRatio": 108.86,
-  "impliedVolatility": 0.5494,
-  "weightedIV": 0.4395,
-  "delta": -0.9889,
-  "moneyness": 0.2404,
-  "premium": 168216000,
-  "underlyingPrice": 398.68,
-  "sentiment": "bearish",
-  "tradeTime": "2026-03-09T18:35:05.000Z",
-  "retrievedAt": "2026-03-10T09:15:00.000Z",
-  "source": "barchart-unusual-activity"
-}
-```
-
-To filter out the summary record in your downstream processing:
+To filter out the summary record in downstream processing:
 
 ```python
 # Python
@@ -108,6 +79,116 @@ records = [r for r in dataset if r.get('type') != 'run-summary']
 const records = dataset.filter(r => r.type !== 'run-summary');
 ```
 
+### Contract Records — `unusual-activity` and `options-chain`
+
+```json
+{
+  "recordId": "b0534h",
+  "ticker": "TSLA",
+  "contractName": null,
+  "type": "put",
+  "strike": 490,
+  "expiration": "2026-03-20",
+  "daysToExpiry": 9,
+  "lastPrice": 82.51,
+  "bid": 81.70,
+  "ask": 82.75,
+  "volume": 21710,
+  "openInterest": 157,
+  "volumeOIRatio": 138.2803,
+  "impliedVolatility": 0.6318,
+  "weightedIV": 0.43278096333567,
+  "delta": -0.967937,
+  "moneyness": 0.20151047,
+  "premium": 179129210,
+  "underlyingPrice": 407.82,
+  "sentiment": "bullish",
+  "tradeTime": "2026-03-11T19:42:45.000Z",
+  "retrievedAt": "2026-03-12T02:23:06.436Z",
+  "source": "barchart-unusual-activity"
+}
+```
+
+**Field notes:**
+- `contractName` — the full Barchart symbol (e.g. `TSLA|20260320|490.00P`). This is `null` for `unusual-activity` records because Barchart does not return it on the unusual activity endpoint. It is present on `options-chain` and `ticker-flow` records.
+- `volumeOIRatio` — rounded to 4 decimal places. Values below `0.01` would have shown as `0.00` at 2dp, which is why 4dp precision is used.
+- `sentiment` — derived from where `lastPrice` falls relative to the bid/ask spread: above ask = `"bullish"` (aggressive buyer), below bid = `"bearish"` (aggressive seller), between = `"neutral"` or `"bullish"`/`"bearish"` based on which side of mid. Returns `"neutral"` when volume is zero.
+- `premium` — total dollar value of the trade: `lastPrice × volume × 100`.
+- `impliedVolatility` — expressed as a decimal (e.g. `0.63` = 63% IV). Note: the flow endpoint occasionally returns `0` for illiquid or end-of-day prints; treat `impliedVolatility: 0` as effectively null.
+
+### Contract Records — `ticker-flow`
+
+The flow endpoint returns a different field set. Key differences from the above:
+
+```json
+{
+  "recordId": "u18m8z",
+  "ticker": "AAPL",
+  "contractName": "AAPL|20260320|290.00P",
+  "type": "put",
+  "strike": 290,
+  "expiration": "2026-03-20",
+  "daysToExpiry": null,
+  "optionPrice": 29.95,
+  "bid": 28.65,
+  "ask": 31.25,
+  "underlyingPrice": 259.9983,
+  "volume": 1025,
+  "openInterest": 135,
+  "impliedVolatility": 34.064816047188,
+  "premium": 3069875,
+  "tradeCondition": "electronic",
+  "sentiment": null,
+  "tradeTime": "2026-03-11T18:24:33.000Z",
+  "retrievedAt": "2026-03-12T02:11:12.715Z",
+  "source": "barchart-ticker-flow"
+}
+```
+
+**Differences from unusual-activity/options-chain:**
+- `optionPrice` replaces `lastPrice` — the flow endpoint does not return a separate option last-trade price, so `optionPrice` is the bid/ask midpoint, which is the best available proxy.
+- `underlyingPrice` — the underlying stock's last price at the time of the trade. This field is also present on `unusual-activity` and `options-chain` records.
+- `lastPrice`, `volumeOIRatio`, `weightedIV`, `delta`, `moneyness` — not present on flow records.
+- `daysToExpiry` — always `null` on flow records (not returned by the flow endpoint).
+- `tradeCondition` — OPRA condition code for the print. Possible values: `"iso"` (intermarket sweep), `"electronic"`, `"market-maker"`, `"floor"`, `"cancel"`, `"auto-exec"`, `"spread"`, `"cross"`, `"quote"`.
+- `sentiment` — always `null` on flow records. Because `optionPrice` is derived from the bid/ask mid, it is impossible to determine whether the trade was buyer- or seller-initiated.
+
+---
+
+## Record Identity and Deduplication
+
+Every record has a `recordId` — a deterministic 6-character hash used to identify unique records across runs.
+
+**How recordId is computed:**
+
+| Mode | Key fields hashed |
+|---|---|
+| `unusual-activity` | `ticker \| type \| strike \| expiration \| tradeTime` |
+| `ticker-flow` | `ticker \| type \| strike \| expiration \| tradeTime` |
+| `options-chain` | `ticker \| type \| strike \| expiration` |
+
+`tradeTime` is included for trade-level modes so that two separate fills on the same contract at different times produce different `recordId` values. It is omitted for `options-chain` because the chain is a snapshot — the contract itself is the stable identity regardless of when it was fetched. This means `options-chain` `recordId` values are fully stable across runs.
+
+**Each run returns a full snapshot**, not incremental data. To merge two runs and remove duplicates:
+
+```python
+import json
+
+run1 = [r for r in dataset1 if r.get('type') != 'run-summary']
+run2 = [r for r in dataset2 if r.get('type') != 'run-summary']
+
+seen = set()
+merged = []
+for record in run1 + run2:
+    if record['recordId'] not in seen:
+        seen.add(record['recordId'])
+        merged.append(record)
+
+print(f"{len(merged)} unique records")
+```
+
+New trades on the same contract will have a different `tradeTime` and therefore a different `recordId` — so you won't lose genuinely new activity by deduplicating.
+
 ---
 
 ## Modes In Detail
@@ -115,6 +196,8 @@ const records = dataset.filter(r => r.type !== 'run-summary');
 ### `unusual-activity` (default)
 
 Scans the full market for contracts where today's volume is unusually high relative to existing open interest. This is the primary signal used by options flow traders to identify institutional positioning, sweep orders, and potential directional bets.
+
+Results are ordered by Vol/OI ratio descending — strongest signals first.
 
 **When to use:** Daily market scans, alert systems, screening for high-conviction setups.
 
@@ -134,7 +217,7 @@ Scans the full market for contracts where today's volume is unusually high relat
 
 ### `options-chain`
 
-Returns the full options chain for one or more tickers. Useful for building a complete picture of positioning across all strikes and expiries for a specific stock.
+Returns the full options chain for one or more tickers. Useful for building a complete picture of positioning across all strikes and expiries for a specific stock. Results are ordered by strike price ascending.
 
 ```json
 {
@@ -148,40 +231,17 @@ Returns the full options chain for one or more tickers. Useful for building a co
 
 ### `ticker-flow`
 
-Returns intraday order flow for specific tickers, including trade condition flags (sweep, block, split, floor). This is the most granular data — individual trades rather than aggregated contract snapshots.
+Returns intraday order flow for specific tickers — individual trades rather than aggregated contract snapshots. Includes trade condition classification via OPRA codes.
+
+Note: `minVolumeOIRatio` and `minPremium` filters are not applied in this mode. Use `optionType` to filter to calls or puts.
 
 ```json
 {
   "mode": "ticker-flow",
-  "tickers": ["SPY", "QQQ"]
+  "tickers": ["SPY", "QQQ"],
+  "optionType": "call"
 }
 ```
-
----
-
-## Deduplication Across Runs
-
-Each run returns a **full snapshot** of current market data — not incremental updates. If you run the actor multiple times per day, records for the same contract at the same `tradeTime` will have identical `recordId` values.
-
-**To merge two runs and remove duplicates:**
-
-```python
-import json
-
-run1 = [r for r in dataset1 if r.get('type') != 'run-summary']
-run2 = [r for r in dataset2 if r.get('type') != 'run-summary']
-
-seen = set()
-merged = []
-for record in run1 + run2:
-    if record['recordId'] not in seen:
-        seen.add(record['recordId'])
-        merged.append(record)
-
-print(f"{len(merged)} unique records")
-```
-
-New trades on the same contract will have a different `tradeTime` and therefore a different `recordId` — so you won't lose genuinely new activity by deduplicating.
 
 ---
 
