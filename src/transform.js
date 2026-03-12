@@ -32,7 +32,9 @@ function simpleHash(str) {
         hash = ((hash << 5) - hash) + char;
         hash = hash & hash; // Convert to 32-bit integer
     }
-    return Math.abs(hash).toString(36);
+    // padStart(6, '0') ensures recordId is always 6 chars.
+    // Without padding, ~1.4% of hashes (where the value < 36^5) produce 5 chars.
+    return Math.abs(hash).toString(36).padStart(6, '0').slice(-6);
 }
 
 /**
@@ -250,6 +252,7 @@ export function transformTickerFlow(item, ticker) {
     const tradeConditionMap = {
         'A': 'auto-exec',
         'C': 'cancel',
+        'E': 'electronic',
         'F': 'floor',
         'I': 'iso',
         'M': 'market-maker',
