@@ -9,7 +9,7 @@
  * 3. Route to correct scraper based on `mode`
  * 4. Transform & filter results
  * 5. Push run-summary record + all results to dataset
- * 6. Charge flat $1.50 actor-start fee (Pay-Per-Event) after successful delivery
+ * 6. Charge flat $1.50 run-complete fee (Pay-Per-Event) after successful delivery
  *
  * Pricing: $1.50 flat per run — no per-record charge.
  * Each run returns a full snapshot. Use recordId to deduplicate across runs.
@@ -64,7 +64,7 @@ try {
         optionType = 'all',
         minVolumeOIRatio = 1.5,
         minPremium = 10000,
-        minVolume = 1,       // options-chain mode: default 1 filters zero-volume strikes
+        minVolume = 0,       // options-chain mode: filter illiquid contracts by raw volume
         expirationDate = null,
         maxResults = 1000,   // Advanced input — default covers all meaningful unusual activity
     } = input;
@@ -76,7 +76,6 @@ try {
     console.log(`   Option type:       ${optionType}`);
     if (mode === 'options-chain') {
         console.log(`   Min Volume:        ${minVolume}`);
-        console.log(`   Min Premium:       $${minPremium.toLocaleString()}`);
     } else {
         console.log(`   Min Vol/OI ratio:  ${minVolumeOIRatio}`);
         console.log(`   Min Premium:       $${minPremium.toLocaleString()}`);
@@ -98,16 +97,12 @@ try {
     // If the actor fails at any point before pushData completes, no charge is made.
     const session = await getBarchartSession();
 
-    // Filter behaviour differs by mode:
-    // - unusual-activity: optionType + minVolumeOIRatio + minPremium
-    // - options-chain:    optionType + minVolume + minPremium (no ratio — meaningless on full chain)
-    // - ticker-flow:      optionType only — flow records have no OI so ratio is always null,
-    //                     and premium is often unavailable. Both are zeroed out.
+    // options-chain uses a volume floor instead of vol/OI ratio — the ratio is
+    // meaningless for full-chain views where most strikes have low/zero volume.
+    // ticker-flow has no vol/OI ratio either, so same treatment applies.
     const filters =
         mode === 'options-chain'
-            ? { optionType, minVolumeOIRatio: 0, minPremium, minVolume }
-        : mode === 'ticker-flow'
-            ? { optionType, minVolumeOIRatio: 0, minPremium: 0, minVolume: 0 }
+            ? { optionType, minVolumeOIRatio: 0, minPremium: 0, minVolume }
             : { optionType, minVolumeOIRatio, minPremium, minVolume: 0 };
 
     // ── 3. Route to correct scraper ────────────────────────────────────────────
@@ -219,17 +214,13 @@ try {
         filtersApplied: {
             optionType,
             ...(mode === 'options-chain'
-                ? { minVolume, minPremium }
-                : mode === 'ticker-flow'
-                ? {}
+                ? { minVolume }
                 : { minVolumeOIRatio, minPremium }
             ),
         },
         note: truncated
-            ? `Only top ${maxResults} results returned. Raise maxResults to get more.` +
-              (mode === 'unusual-activity' ? ' Results ordered by Vol/OI ratio desc — strongest signals first.' :
-               mode === 'options-chain'    ? ' Results ordered by strike price asc.' : '')
-            : `All available results returned. Each run is a full snapshot — use recordId to deduplicate across runs.`,
+            ? `Only top ${maxResults} signals returned (ordered by Vol/OI ratio desc). Raise maxResults to get more.`
+            : `All available signals returned. Each run is a full snapshot — use recordId to deduplicate across runs.`,
         fetchedAt: new Date().toISOString(),
     };
 
@@ -241,7 +232,7 @@ try {
     // paying for failed or empty runs. If the actor crashes before reaching this
     // line, no charge is made.
     if (allResults.length > 0) {
-        await Actor.charge({ eventName: 'actor-start', count: 1 });
+        await Actor.charge({ eventName: 'run-complete', count: 1 });
         console.log(`💳 Run fee charged — ${allResults.length} records delivered.`);
     } else {
         console.log(`ℹ️  No results matched your filters — run fee not charged.`);
