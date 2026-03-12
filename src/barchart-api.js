@@ -127,11 +127,15 @@ export async function fetchUnusualActivity(session, baseSymbolTypes = 'stock', m
     let total = Infinity;
 
     while (allData.length < maxResults && allData.length < total) {
-        console.log('   Fetching page ' + page + ' for ' + baseSymbolTypes + '...');
-        const { data, total: pageTotal } = await fetchUnusualActivityPage(session, baseSymbolTypes, page, LIMIT);
+        // Cap the page size to only what we still need — avoids over-fetching on the last page.
+        const remaining = maxResults - allData.length;
+        const pageLimit = Math.min(LIMIT, remaining);
+        console.log('   Fetching page ' + page + ' for ' + baseSymbolTypes +
+                    ' (limit=' + pageLimit + ')...');
+        const { data, total: pageTotal } = await fetchUnusualActivityPage(session, baseSymbolTypes, page, pageLimit);
         total = pageTotal;
         allData.push(...data);
-        if (data.length < LIMIT) break;
+        if (data.length < pageLimit) break;
         page++;
         await new Promise(r => setTimeout(r, 2000));
     }
@@ -150,11 +154,14 @@ export async function fetchOptionsChain(session, ticker, expirationDate = null, 
     const tickerUpper = ticker.toUpperCase();
 
     while (allData.length < maxResults) {
+        // Cap the page size to only what we still need — avoids over-fetching on the last page.
+        const remaining = maxResults - allData.length;
+        const pageLimit = Math.min(LIMIT, remaining);
         const params = new URLSearchParams({
             fields: UNUSUAL_ACTIVITY_FIELDS,
             orderBy: 'strikePrice',
             orderDir: 'asc',
-            limit: String(LIMIT),
+            limit: String(pageLimit),
             page: String(page),
             raw: '1',
         });
@@ -181,7 +188,7 @@ export async function fetchOptionsChain(session, ticker, expirationDate = null, 
         const data = json.data || [];
         allData.push(...data);
 
-        if (data.length < LIMIT || allData.length >= (json.total || 0)) break;
+        if (data.length < pageLimit || allData.length >= (json.total || 0)) break;
         page++;
         await new Promise(r => setTimeout(r, 2000));
     }
